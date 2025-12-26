@@ -1,0 +1,88 @@
+#!/usr/bin/env php
+<?php
+
+declare(strict_types=1);
+
+$dsn = $_ENV['DATABASE_DSN'];
+$user = null;
+$password = null;
+
+$pdo = new PDO($dsn, $user, $password, [
+    PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
+]);
+
+$dir = __DIR__ . '/../migrations';
+$mode = $argv[1] ?? 'migrate'; // 'migrate' или 'rollback'
+
+$pdo->exec("
+    CREATE TABLE IF NOT EXISTS migrations (
+        id SERIAL PRIMARY KEY,
+        filename TEXT NOT NULL UNIQUE,
+        executed_at TIMESTAMP NOT NULL DEFAULT NOW()
+    )
+");
+
+$executedStmt = $pdo->query("SELECT filename FROM migrations ORDER BY id ASC");
+$executed = $executedStmt->fetchAll(PDO::FETCH_COLUMN);
+
+$files = glob($dir . '/*.up.sql');
+sort($files);
+
+if ($mode === 'migrate') {
+    foreach ($files as $file) {
+        $basename = basename($file);
+        if (in_array($basename, $executed, true)) {
+            echo "[SKIP] $basename\n";
+            continue;
+        }
+
+        echo "[RUN] $basename\n";
+        $sql = file_get_contents($file);
+        if ($sql === false) continue;
+
+        try {
+            $pdo->beginTransaction();
+            $pdo->exec($sql);
+            $stmt = $pdo->prepare("INSERT INTO migrations (filename) VALUES (:filename)");
+            $stmt->execute(['filename' => $basename]);
+            $pdo->commit();
+            echo "[OK] $basename\n";
+        } catch (PDOException $e) {
+            $pdo->rollBack();
+            echo "[ERROR] $basename: " . $e->getMessage() . "\n";
+            exit(1);
+        }
+    }
+} elseif ($mode === 'rollback') {
+    // Откатываем последнюю миграцию
+    $last = end($executed);
+    if (!$last) {
+        echo "No migrations to rollback.\n";
+        exit(0);
+    }
+
+    $downFile = $dir . '/' . str_replace('.up.sql', '.down.sql', $last);
+    if (!file_exists($downFile)) {
+        echo "Rollback file not found: $downFile\n";
+        exit(1);
+    }
+
+    echo "[ROLLBACK] $last\n";
+    $sql = file_get_contents($downFile);
+    if ($sql === false) exit(1);
+
+    try {
+        $pdo->beginTransaction();
+        $pdo->exec($sql);
+        $stmt = $pdo->prepare("DELETE FROM migrations WHERE filename = :filename");
+        $stmt->execute(['filename' => $last]);
+        $pdo->commit();
+        echo "[OK] $last rolled back\n";
+    } catch (PDOException $e) {
+        $pdo->rollBack();
+        echo "[ERROR] rollback $last: " . $e->getMessage() . "\n";
+        exit(1);
+    }
+} else {
+    echo "Unknown mode: $mode\n";
+}
