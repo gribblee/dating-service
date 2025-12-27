@@ -24,10 +24,7 @@ final class TestController implements ControllerInterface
     ): ResponseObject {
         $this->fastLog->info(json_encode($this->handler->handle()));
         return new ResponseObject(
-            result: [
-                'id' => $params->getBody()?->id ?? null,
-                'sort' => $params->getQuery()['sort'],
-            ]
+            result: $this->handler->handle()
         );
     }
 }

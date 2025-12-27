@@ -6,6 +6,7 @@ namespace App;
 
 use Exception;
 use PgSql\Connection;
+use PgSql\Result;
 
 readonly class Database
 {
@@ -24,5 +25,15 @@ readonly class Database
             throw new Exception('Connection failed');
         }
         $this->connection = $connection;
+    }
+
+    public function query(string $query, array $params = []): false|Result
+    {
+        return pg_query_params($this->connection, $query, $params);
+    }
+
+    public function fetch(Result $result): false|object
+    {
+        return pg_fetch_object($result);
     }
 }

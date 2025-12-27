@@ -1,35 +1,46 @@
 #!/usr/bin/env php
 <?php
-
 declare(strict_types=1);
 
-$dsn = $_ENV['DATABASE_DSN'];
-$user = null;
-$password = null;
-
-$pdo = new PDO($dsn, $user, $password, [
-    PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
-]);
+$dsn = $_ENV['DATABASE_DSN'] ?? '';
+if (!$dsn) {
+    echo "DATABASE_DSN not set\n";
+    exit(1);
+}
 
 $dir = __DIR__ . '/../migrations';
-$mode = $argv[1] ?? 'migrate'; // 'migrate' или 'rollback'
+$mode = $argv[1] ?? 'migrate';
 
-$pdo->exec("
-    CREATE TABLE IF NOT EXISTS migrations (
-        id SERIAL PRIMARY KEY,
-        filename TEXT NOT NULL UNIQUE,
-        executed_at TIMESTAMP NOT NULL DEFAULT NOW()
-    )
+$pg = pg_connect($dsn);
+if (!$pg) {
+    echo "Cannot connect to PostgreSQL\n";
+    exit(1);
+}
+
+// Таблица миграций
+pg_query($pg, "
+CREATE TABLE IF NOT EXISTS migrations (
+    id SERIAL PRIMARY KEY,
+    filename TEXT NOT NULL UNIQUE,
+    executed_at TIMESTAMP NOT NULL DEFAULT NOW()
+)
 ");
 
-$executedStmt = $pdo->query("SELECT filename FROM migrations ORDER BY id ASC");
-$executed = $executedStmt->fetchAll(PDO::FETCH_COLUMN);
+// Выполненные миграции
+$res = pg_query($pg, "SELECT filename FROM migrations ORDER BY id ASC");
+$executedRows = pg_fetch_all($res);
+$executed = [];
+if ($executedRows !== false) {
+    foreach ($executedRows as $row) {
+        $executed[] = $row['filename'];
+    }
+}
 
-$files = glob($dir . '/*.up.sql');
-sort($files);
+$upFiles = glob($dir . '/*.up.sql');
+sort($upFiles);
 
 if ($mode === 'migrate') {
-    foreach ($files as $file) {
+    foreach ($upFiles as $file) {
         $basename = basename($file);
         if (in_array($basename, $executed, true)) {
             echo "[SKIP] $basename\n";
@@ -38,23 +49,31 @@ if ($mode === 'migrate') {
 
         echo "[RUN] $basename\n";
         $sql = file_get_contents($file);
-        if ($sql === false) continue;
+        if ($sql === false) {
+            echo "[ERROR] Cannot read $basename\n";
+            continue;
+        }
 
-        try {
-            $pdo->beginTransaction();
-            $pdo->exec($sql);
-            $stmt = $pdo->prepare("INSERT INTO migrations (filename) VALUES (:filename)");
-            $stmt->execute(['filename' => $basename]);
-            $pdo->commit();
-            echo "[OK] $basename\n";
-        } catch (PDOException $e) {
-            $pdo->rollBack();
-            echo "[ERROR] $basename: " . $e->getMessage() . "\n";
+        // Транзакция
+        pg_query($pg, "BEGIN");
+        $result = pg_query($pg, $sql);
+        if ($result === false) {
+            pg_query($pg, "ROLLBACK");
+            echo "[ERROR] Failed: $basename\n";
             exit(1);
         }
+
+        $insertRes = pg_query_params($pg, "INSERT INTO migrations (filename) VALUES ($1)", [$basename]);
+        if ($insertRes === false) {
+            pg_query($pg, "ROLLBACK");
+            echo "[ERROR] Cannot record $basename\n";
+            exit(1);
+        }
+
+        pg_query($pg, "COMMIT");
+        echo "[OK] $basename\n";
     }
 } elseif ($mode === 'rollback') {
-    // Откатываем последнюю миграцию
     $last = end($executed);
     if (!$last) {
         echo "No migrations to rollback.\n";
@@ -69,20 +88,29 @@ if ($mode === 'migrate') {
 
     echo "[ROLLBACK] $last\n";
     $sql = file_get_contents($downFile);
-    if ($sql === false) exit(1);
-
-    try {
-        $pdo->beginTransaction();
-        $pdo->exec($sql);
-        $stmt = $pdo->prepare("DELETE FROM migrations WHERE filename = :filename");
-        $stmt->execute(['filename' => $last]);
-        $pdo->commit();
-        echo "[OK] $last rolled back\n";
-    } catch (PDOException $e) {
-        $pdo->rollBack();
-        echo "[ERROR] rollback $last: " . $e->getMessage() . "\n";
+    if ($sql === false) {
+        echo "[ERROR] Cannot read rollback file $downFile\n";
         exit(1);
     }
+
+    pg_query($pg, "BEGIN");
+    $res = pg_query($pg, $sql);
+    if ($res === false) {
+        pg_query($pg, "ROLLBACK");
+        echo "[ERROR] Failed rollback $last\n";
+        exit(1);
+    }
+
+    $delRes = pg_query_params($pg, "DELETE FROM migrations WHERE filename = $1", [$last]);
+    if ($delRes === false) {
+        pg_query($pg, "ROLLBACK");
+        echo "[ERROR] Cannot delete migration record $last\n";
+        exit(1);
+    }
+
+    pg_query($pg, "COMMIT");
+    echo "[OK] $last rolled back\n";
 } else {
     echo "Unknown mode: $mode\n";
+    exit(1);
 }
