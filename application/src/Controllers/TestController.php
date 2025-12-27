@@ -2,18 +2,31 @@
 
 declare(strict_types=1);
 
-namespace App\Controllers {
-    use App\ValueObject\ParamsObject;
-    use App\ValueObject\ResponseObject;
+namespace App\Controllers;
 
-    function TestController(
+use App\FastLog;
+use App\Handlers\TestHandler;
+use App\ValueObject\ParamsObject;
+use App\ValueObject\ResponseObject;
+
+final class TestController implements ControllerInterface
+{
+    private TestHandler $handler;
+
+    public function __construct(
+        private FastLog $fastLog
+    ) {
+        $this->handler = new TestHandler();
+    }
+
+    public function execute(
         ParamsObject $params
     ): ResponseObject {
-        $body = simdjson_decode($params->body);
+        $this->fastLog->info(json_encode($this->handler->handle()));
         return new ResponseObject(
             result: [
-                'id' => $body->id,
-                'sort' => $params->query['sort'],
+                'id' => $params->getBody()?->id ?? null,
+                'sort' => $params->getQuery()['sort'],
             ]
         );
     }

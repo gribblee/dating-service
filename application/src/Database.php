@@ -2,21 +2,27 @@
 
 declare(strict_types=1);
 
-namespace App\Database {
-    use PgSql\Connection;
+namespace App;
+
+use Exception;
+use PgSql\Connection;
+
+readonly class Database
+{
+    private Connection $connection;
 
     /**
-     * @throws \Exception
+     * @throws Exception
      */
-    function GetConnection(): Connection
+    public function __construct()
     {
         if (empty($_ENV['DATABASE_DSN'] ?? '')) {
-            throw new \Exception('DATABASE_DSN not defined');
+            throw new Exception('DATABASE_DSN not defined');
         }
         $connection = pg_connect($_ENV['DATABASE_DSN'] ?? '');
         if (false === $connection) {
-            throw new \Exception('Connection failed');
+            throw new Exception('Connection failed');
         }
-        return $connection;
+        $this->connection = $connection;
     }
 }

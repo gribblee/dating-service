@@ -2,18 +2,25 @@
 
 declare(strict_types=1);
 
-namespace App\Router {
+namespace App;
 
-    use App\Enums\HttpStatus;
-    use App\Exception\HttpNotFoundException;
-    use App\FastLog;
-    use App\ValueObject\ParamsObject;
-    use App\ValueObject\ResponseObject;
-    use Exception;
+use App\Controllers\ControllerInterface;
+use App\Enums\HttpStatus;
+use App\Exception\HttpNotFoundException;
+use App\ValueObject\ParamsObject;
+use App\ValueObject\ResponseObject;
+use Exception;
 
-    function ExecuteRouter(): ResponseObject
-    {
-        /** @var array<string, array<string, mixed>> $routers */
+class Router
+{
+    public function __construct(
+        private FastLog $logger
+    ) {
+    }
+
+    public function ExecuteRouter(
+    ): ResponseObject {
+        /** @var array<string, array<string, ControllerInterface>> $routers */
         $routers = require __DIR__ . DIRECTORY_SEPARATOR . '/Config/routers.php';
         $path = (string)parse_url($_SERVER['REQUEST_URI'] ?? '', PHP_URL_PATH);
         $method = ($_SERVER['REQUEST_METHOD'] ?? '');
@@ -29,10 +36,9 @@ namespace App\Router {
                     throw new HttpNotFoundException();
                 }
             }
-            $controller = $routers[$method][$path];
-            return $controller->__invoke($params);
+            return new $routers[$method][$path]($this->logger)->execute($params);
         } catch (HttpNotFoundException $e) {
-            FastLog::error($e->getMessage(), [
+            $this->logger->error($e->getMessage(), [
                 'status' => '404',
                 'path' => $path,
                 'params' => $params
@@ -42,7 +48,7 @@ namespace App\Router {
                 status: HttpStatus::NOT_FOUND
             );
         } catch (Exception $e) {
-            FastLog::error($e->getMessage(), [
+            $this->logger->error($e->getMessage(), [
                 'status' => '500',
                 'path' => $path,
                 'params' => $params

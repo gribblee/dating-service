@@ -2,14 +2,12 @@
 
 declare(strict_types=1);
 
-namespace App\Handlers {
-    function TestHandle(): array
+namespace App\Handlers;
+
+final class TestHandler
+{
+    public function handle(): array
     {
-        return [
-            1,
-            2,
-            3,
-            5
-        ];
+        return [];
     }
 }

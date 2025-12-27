@@ -62,4 +62,8 @@ RUN composer global require \
     vimeo/psalm \
     friendsofphp/php-cs-fixer
 
+
+#RUN composer install --no-scripts --optimize-autoloader
+#RUN composer dump-autoload --optimize
+
 ENV PATH="/root/.composer/vendor/bin:${PATH}"
